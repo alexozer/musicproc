@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-Mirror ~/Music into ~/Downloads/music-transcoded, transcoding lossless audio to high-quality Opus
-and copying every other file over as-is. Re-runs are incremental: up-to-date outputs are skipped.
-Outputs whose source file no longer exists are pruned.
-
-Why transcode FLAC to .m4a (audio-only MP4) instead of OGG (natively supported by opusenc)? opusenc
-appears to incorrectly map audio gain tag metadata, sometimes outputting ear-destroyingly-loud
-gains. So: transcode using ffmpeg instead, but since ffpeg can't insert album art into OGG, MP4 it
-is.
+Metadata handling follows beets' convert plugin: ffmpeg transcodes audio ONLY (no -map_metadata,
+no -movflags -- ffmpeg's MP4 tag muxing is broken either way: +use_metadata_tags writes mdta-style
+atoms most players can't read, while the default muxer silently drops unknown tags such as
+replaygain_*). Instead, after transcoding, tags and cover art are copied from the source file with
+mediafile (beets' tagging library), which writes standard iTunes atoms (©ART etc.) plus
+----:com.apple.iTunes:* freeform atoms for everything else.
 
 Usage:
-    python3 transcode_music.py [--dry-run] [--workers N] [--force] [--no-prune]
+    uv run transcode_music.py [--dry-run] [--workers N] [--force] [--no-prune]
 """
 
 import argparse
@@ -20,6 +18,11 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+try:
+    from mediafile import MediaFile
+except ImportError:
+    sys.exit("error: mediafile not installed; run `uv sync` in the project directory first")
 
 SOURCE = Path.home() / "Music"
 DEST = Path.home() / "Downloads" / "music-transcoded"
@@ -60,14 +63,42 @@ def classify(path: Path) -> str:
     return "copy"
 
 
+def copy_metadata(src: Path, dst: Path) -> None:
+    """Copy tags and cover art from src to dst with mediafile, field by field.
+
+    Best-effort, like beets: sources with no readable tags are left alone and
+    failures warn rather than fail the transcode (the audio itself is fine).
+    """
+    try:
+        try:
+            src_mf = MediaFile(str(src))
+        except Exception:
+            return  # no tags mediafile can read (e.g. raw wav); keep ffmpeg defaults
+        dst_mf = MediaFile(str(dst))
+        for field in MediaFile.fields():
+            if field == "art":  # alias for images[0]; 'images' carries the same data
+                continue
+            try:
+                value = getattr(src_mf, field)
+            except Exception:
+                continue
+            if not value:
+                continue
+            setattr(dst_mf, field, value)
+        dst_mf.save()
+    except Exception as e:
+        print(f"WARN: could not copy metadata for {src.name}: {e}", file=sys.stderr)
+
+
 def transcode(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(dst.name + ".part")
+    # Audio only -- deliberately no -map_metadata/-movflags (see module docstring).
+    # Tags and cover art are re-embedded from the source afterwards via copy_metadata().
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-i", str(src),
         "-map", "0:a", "-vn",
-        "-map_metadata", "0", "-movflags", "+use_metadata_tags",
         "-c:a", "libopus", "-b:a", OPUS_BITRATE, "-vbr", "on",
         "-strict", "experimental",  # Opus in MP4 is not yet in the ipod muxer
         "-f", "mp4",  # .m4a extension would select the ipod muxer, which rejects Opus
@@ -79,6 +110,7 @@ def transcode(src: Path, dst: Path) -> None:
         err = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else f"{cmd[0]} exited {r.returncode}"
         raise RuntimeError(err)
     tmp.replace(dst)
+    copy_metadata(src, dst)  # after rename: mediafile picks the tagger from the .m4a extension
 
 
 def copy_file(src: Path, dst: Path) -> None:
