@@ -212,9 +212,6 @@ func doStuff() error {
 	srcDir := os.Args[1]
 	destDir := os.Args[2]
 
-	// TODO remove
-	os.RemoveAll(destDir)
-
 	srcTree, err := getFSTree(srcDir)
 	if err != nil {
 		return fmt.Errorf("failed to get src tree: %w", err)
