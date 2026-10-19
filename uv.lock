@@ -39,7 +39,11 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "mediafile" },
+    { name = "mutagen" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "mediafile", specifier = ">=0.17.0" }]
+requires-dist = [
+    { name = "mediafile", specifier = ">=0.17.0" },
+    { name = "mutagen", specifier = ">=1.48.1" },
+]
