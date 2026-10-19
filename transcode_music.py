@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,9 @@ LOSSLESS_EXTS = {".flac", ".wav", ".aiff", ".aif", ".aifc", ".alac", ".ape", ".w
 AMBIGUOUS_EXTS = {".m4a", ".m4b", ".m4p", ".mp4", ".caf"}
 
 OPUS_BITRATE = "192k"
+
+# Syncthing markers living in the destination folder; never prune these
+SYNCTHING_MARKERS = {".stfolder", ".stignore", ".stversions"}
 
 
 def is_hidden(path: Path, root: Path) -> bool:
@@ -89,6 +93,10 @@ def run_job(action: str, src: Path, dst: Path) -> None:
     (transcode if action == "transcode" else copy_file)(src, dst)
 
 
+def is_syncthing_marker(path: Path) -> bool:
+    return any(part in SYNCTHING_MARKERS for part in path.relative_to(DEST).parts)
+
+
 def prune_stale(expected: set[str], dry_run: bool) -> int:
     """Delete files in DEST with no corresponding source file, then remove
     directories left empty. Returns the number of files that are stale."""
@@ -96,7 +104,9 @@ def prune_stale(expected: set[str], dry_run: bool) -> int:
         return 0
     stale = sorted(
         f for f in DEST.rglob("*")
-        if f.is_file() and f.relative_to(DEST).as_posix() not in expected
+        if f.is_file()
+        and f.relative_to(DEST).as_posix() not in expected
+        and not is_syncthing_marker(f)
     )
     for f in stale:
         if dry_run:
@@ -104,7 +114,8 @@ def prune_stale(expected: set[str], dry_run: bool) -> int:
         else:
             f.unlink()
     if not dry_run:
-        for d in sorted((p for p in DEST.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+        for d in sorted((p for p in DEST.rglob("*") if p.is_dir() and not is_syncthing_marker(p)),
+                        key=lambda p: len(p.parts), reverse=True):
             try:
                 d.rmdir()  # only succeeds when empty
             except OSError:
@@ -115,7 +126,8 @@ def prune_stale(expected: set[str], dry_run: bool) -> int:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="show what would be done without doing it")
-    ap.add_argument("--workers", type=int, default=4, help="parallel ffmpeg jobs (default: 4)")
+    ap.add_argument("--workers", type=int, default=os.cpu_count() or 4,
+                    help=f"parallel ffmpeg jobs (default: CPU count, {os.cpu_count() or 4})")
     ap.add_argument("--force", action="store_true", help="re-process even if output already exists and is up to date")
     ap.add_argument("--no-prune", action="store_true", help="do not delete outputs whose source is gone")
     args = ap.parse_args()
