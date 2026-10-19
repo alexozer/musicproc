@@ -1,8 +1,8 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"go.senan.xyz/taglib"
 	"io"
 	"io/fs"
 	"log"
@@ -10,8 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+
+	"go.senan.xyz/taglib"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -249,11 +253,15 @@ func doStuff() error {
 		}
 	}
 
-	// TODO concurrency
+	errGroup, _ := errgroup.WithContext(context.Background())
+	errGroup.SetLimit(runtime.NumCPU())
 	for _, f := range plan.ConvertFiles {
-		if err := convertFile(f.Src, f.Dest); err != nil {
-			return err
-		}
+		errGroup.Go(func() error {
+			return convertFile(f.Src, f.Dest)
+		})
+	}
+	if err := errGroup.Wait(); err != nil {
+		return err
 	}
 
 	// TODO FS watching
