@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Mirror ~/Music into ~/Downloads/music-transcoded, transcoding lossless audio
-(FLAC, WAV, AIFF, ALAC, ...) to high-quality Opus (192k VBR) and copying
-every other file over as-is. FLACs go through opusenc, which preserves tags
-and embedded album art automatically. Re-runs are incremental: up-to-date
-outputs are skipped. Outputs whose source file no longer exists are pruned,
-so the destination stays an exact mirror of ~/Music.
+Mirror ~/Music into ~/Downloads/music-transcoded, transcoding lossless audio to high-quality Opus
+and copying every other file over as-is. Re-runs are incremental: up-to-date outputs are skipped.
+Outputs whose source file no longer exists are pruned.
+
+Why transcode FLAC to .m4a (audio-only MP4) instead of OGG (natively supported by opusenc)? opusenc
+appears to incorrectly map audio gain tag metadata, sometimes outputting ear-destroyingly-loud
+gains. So: transcode using ffmpeg instead, but since ffpeg can't insert album art into OGG, MP4 it
+is.
 
 Usage:
     python3 transcode_music.py [--dry-run] [--workers N] [--force] [--no-prune]
@@ -60,20 +62,17 @@ def classify(path: Path) -> str:
 
 def transcode(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if src.suffix.lower() == ".flac":
-        # opusenc reads FLAC natively; tags and embedded art carry over automatically
-        tmp = dst.with_name(dst.stem + ".part.opus")  # opusenc requires a .opus output name
-        cmd = ["opusenc", "--quiet", "--bitrate", OPUS_BITRATE, str(src), str(tmp)]
-    else:
-        tmp = dst.with_name(dst.name + ".part")
-        cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-i", str(src),
-            "-map", "0:a", "-map_metadata", "0", "-vn",
-            "-c:a", "libopus", "-b:a", OPUS_BITRATE, "-vbr", "on",
-            "-f", "opus",  # temp file doesn't end in .opus, so tell ffmpeg the container explicitly
-            str(tmp),
-        ]
+    tmp = dst.with_name(dst.name + ".part")
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-i", str(src),
+        "-map", "0:a", "-vn",
+        "-map_metadata", "0", "-movflags", "+use_metadata_tags",
+        "-c:a", "libopus", "-b:a", OPUS_BITRATE, "-vbr", "on",
+        "-strict", "experimental",  # Opus in MP4 is not yet in the ipod muxer
+        "-f", "mp4",  # .m4a extension would select the ipod muxer, which rejects Opus
+        str(tmp),
+    ]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         tmp.unlink(missing_ok=True)
@@ -132,8 +131,8 @@ def main() -> None:
     ap.add_argument("--no-prune", action="store_true", help="do not delete outputs whose source is gone")
     args = ap.parse_args()
 
-    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None or shutil.which("opusenc") is None:
-        sys.exit("error: ffmpeg/ffprobe/opusenc not found in PATH (brew install ffmpeg opus-tools)")
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        sys.exit("error: ffmpeg/ffprobe not found in PATH (brew install ffmpeg)")
 
     if not SOURCE.is_dir():
         sys.exit(f"error: source directory not found: {SOURCE}")
@@ -144,7 +143,7 @@ def main() -> None:
             continue
         rel = src.relative_to(SOURCE)
         action = classify(src)
-        dst = DEST / (rel.with_suffix(".opus") if action == "transcode" else rel)
+        dst = DEST / (rel.with_suffix(".m4a") if action == "transcode" else rel)
         entries.append((action, src, dst))
 
     if not args.no_prune:
