@@ -1,5 +1,7 @@
 # TODO
 
+- [ ] Fix weird Unicode issue - some files are always transcoded
+- [ ] Copy files to .tmp first
 - [ ] Inotify watcher
 - [ ] Systemd service
 - [X] Fix Adventure track numbers
