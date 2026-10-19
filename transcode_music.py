@@ -2,14 +2,16 @@
 """
 Metadata handling follows beets' convert plugin: ffmpeg transcodes audio ONLY (no -map_metadata)
 and tags plus cover art are copied afterwards from the source file with mediafile (beets' tagging
-library), which writes standard Vorbis comments (including replaygain_*) and embeds art as
-METADATA_BLOCK_PICTURE.
+library), which writes standard Vorbis comments (including replaygain_*). Cover art is embedded as
+METADATA_BLOCK_PICTURE via mutagen directly: mediafile's Image type drops the picture's
+width/height/depth fields, writing 0x0 headers that some players refuse to display.
 
 Usage:
     uv run transcode_music.py [--dry-run] [--workers N] [--force] [--no-prune]
 """
 
 import argparse
+import base64
 import os
 import shutil
 import subprocess
@@ -17,8 +19,12 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import mutagen.flac
+import mutagen.oggopus
+
 try:
     from mediafile import MediaFile
+    from mediafile.utils import image_mime_type
 except ImportError:
     sys.exit("error: mediafile not installed; run `uv sync` in the project directory first")
 
@@ -61,8 +67,78 @@ def classify(path: Path) -> str:
     return "copy"
 
 
+def fill_picture_dims(pic: mutagen.flac.Picture) -> None:
+    """Set pic.width/height from the encoded image bytes when the source tag
+    didn't provide them (some taggers write 0x0, which some players reject)."""
+    if pic.width and pic.height:
+        return
+    data = pic.data
+    try:
+        if data[:8] == b"\x89PNG\r\n\x1a\n":  # PNG: dims sit in the IHDR chunk
+            pic.width = int.from_bytes(data[16:20], "big")
+            pic.height = int.from_bytes(data[20:24], "big")
+        elif data[:2] == b"\xff\xd8":  # JPEG: dims sit in the first SOFn marker
+            i = 2
+            while i + 9 < len(data):
+                if data[i] != 0xFF:
+                    i += 1
+                    continue
+                marker = data[i + 1]
+                if marker == 0xD8 or 0xD0 <= marker <= 0xD7 or marker == 0x01:
+                    i += 2
+                    continue
+                seglen = int.from_bytes(data[i + 2:i + 4], "big")
+                if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                    pic.height = int.from_bytes(data[i + 5:i + 7], "big")
+                    pic.width = int.from_bytes(data[i + 7:i + 9], "big")
+                    return
+                i += 2 + seglen
+    except Exception:
+        pass
+
+
+def read_pictures(src: Path) -> list[mutagen.flac.Picture]:
+    """Read cover art from src as mutagen Picture objects.
+
+    FLAC sources are read with mutagen directly so the picture's
+    width/height/depth/colors survive; mediafile's Image type drops them.
+    Other source formats (whose tags don't store dimensions anyway) fall
+    back to mediafile.
+    """
+    try:
+        pics = list(mutagen.flac.FLAC(str(src)).pictures)  # raises on non-FLAC
+    except Exception:
+        pics = []
+    if not pics:
+        try:
+            for img in (MediaFile(str(src)).images or []):
+                pic = mutagen.flac.Picture()
+                pic.data = img.data
+                pic.mime = image_mime_type(img.data) or "image/jpeg"
+                pic.desc = img.desc or ""
+                pic.type = img.type_index if img.type is not None else 3  # untyped = front cover
+                pics.append(pic)
+        except Exception:
+            pass
+    for pic in pics:
+        fill_picture_dims(pic)
+    return pics
+
+
+def copy_art(src: Path, dst: Path) -> None:
+    """Embed src's pictures in the .opus dst as METADATA_BLOCK_PICTURE."""
+    pics = read_pictures(src)
+    if not pics:
+        return
+    audio = mutagen.oggopus.OggOpus(str(dst))
+    audio["metadata_block_picture"] = [
+        base64.b64encode(p.write()).decode("ascii") for p in pics
+    ]
+    audio.save()
+
+
 def copy_metadata(src: Path, dst: Path) -> None:
-    """Copy tags and cover art from src to dst with mediafile, field by field.
+    """Copy tags and cover art from src to dst, field by field.
 
     Best-effort, like beets: sources with no readable tags are left alone and
     failures warn rather than fail the transcode (the audio itself is fine).
@@ -74,7 +150,7 @@ def copy_metadata(src: Path, dst: Path) -> None:
             return  # no tags mediafile can read (e.g. raw wav); keep ffmpeg defaults
         dst_mf = MediaFile(str(dst))
         for field in MediaFile.fields():
-            if field == "art":  # alias for images[0]; 'images' carries the same data
+            if field in ("art", "images"):  # handled by copy_art() with full fidelity
                 continue
             try:
                 value = getattr(src_mf, field)
@@ -86,6 +162,10 @@ def copy_metadata(src: Path, dst: Path) -> None:
         dst_mf.save()
     except Exception as e:
         print(f"WARN: could not copy metadata for {src.name}: {e}", file=sys.stderr)
+    try:
+        copy_art(src, dst)
+    except Exception as e:
+        print(f"WARN: could not copy cover art for {src.name}: {e}", file=sys.stderr)
 
 
 def transcode(src: Path, dst: Path) -> None:
