@@ -27,7 +27,7 @@ LOSSLESS_EXTS = {".flac", ".wav", ".aiff", ".aif", ".aifc", ".alac", ".ape", ".w
 # Containers that may hold either ALAC (lossless) or lossy audio -> probe with ffprobe
 AMBIGUOUS_EXTS = {".m4a", ".m4b", ".m4p", ".mp4", ".caf"}
 
-OPUS_BITRATE = "192k"
+OPUS_BITRATE = "160k"
 
 # Syncthing markers living in the destination folder; never prune these
 SYNCTHING_MARKERS = {".stfolder", ".stignore", ".stversions"}
