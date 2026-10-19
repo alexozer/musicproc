@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
-Metadata handling follows beets' convert plugin: ffmpeg transcodes audio ONLY (no -map_metadata,
-no -movflags -- ffmpeg's MP4 tag muxing is broken either way: +use_metadata_tags writes mdta-style
-atoms most players can't read, while the default muxer silently drops unknown tags such as
-replaygain_*). Instead, after transcoding, tags and cover art are copied from the source file with
-mediafile (beets' tagging library), which writes standard iTunes atoms (©ART etc.) plus
-----:com.apple.iTunes:* freeform atoms for everything else.
+Metadata handling follows beets' convert plugin: ffmpeg transcodes audio ONLY (no -map_metadata)
+and tags plus cover art are copied afterwards from the source file with mediafile (beets' tagging
+library), which writes standard Vorbis comments (including replaygain_*) and embeds art as
+METADATA_BLOCK_PICTURE.
 
 Usage:
     uv run transcode_music.py [--dry-run] [--workers N] [--force] [--no-prune]
@@ -93,15 +91,14 @@ def copy_metadata(src: Path, dst: Path) -> None:
 def transcode(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(dst.name + ".part")
-    # Audio only -- deliberately no -map_metadata/-movflags (see module docstring).
+    # Audio only, no -map_metadata (see module docstring).
     # Tags and cover art are re-embedded from the source afterwards via copy_metadata().
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-i", str(src),
         "-map", "0:a", "-vn",
         "-c:a", "libopus", "-b:a", OPUS_BITRATE, "-vbr", "on",
-        "-strict", "experimental",  # Opus in MP4 is not yet in the ipod muxer
-        "-f", "mp4",  # .m4a extension would select the ipod muxer, which rejects Opus
+        "-f", "ogg",  # tmp file ends in .part, so name the muxer explicitly
         str(tmp),
     ]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -110,7 +107,7 @@ def transcode(src: Path, dst: Path) -> None:
         err = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else f"{cmd[0]} exited {r.returncode}"
         raise RuntimeError(err)
     tmp.replace(dst)
-    copy_metadata(src, dst)  # after rename: mediafile picks the tagger from the .m4a extension
+    copy_metadata(src, dst)  # after rename: mediafile picks the tagger from the .opus extension
 
 
 def copy_file(src: Path, dst: Path) -> None:
@@ -175,7 +172,7 @@ def main() -> None:
             continue
         rel = src.relative_to(SOURCE)
         action = classify(src)
-        dst = DEST / (rel.with_suffix(".m4a") if action == "transcode" else rel)
+        dst = DEST / (rel.with_suffix(".opus") if action == "transcode" else rel)
         entries.append((action, src, dst))
 
     if not args.no_prune:
