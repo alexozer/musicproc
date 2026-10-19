@@ -1,8 +1,8 @@
 package main
 
 import (
-	// "go.senan.xyz/taglib"
 	"fmt"
+	"go.senan.xyz/taglib"
 	"io"
 	"io/fs"
 	"log"
@@ -32,7 +32,7 @@ func getFSTree(dirPath string) (*Tree, error) {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() {
+		if !d.IsDir() && !strings.HasPrefix(d.Name(), ".") {
 			relPath, err := filepath.Rel(dirPath, path)
 			if err != nil {
 				return err
@@ -76,7 +76,7 @@ type Tree struct {
 
 func mapPath(srcPath string) string {
 	lowerExt := strings.ToLower(filepath.Ext(srcPath))
-	if lowerExt == ".flac" || lowerExt == ".wav" {
+	if lowerExt == ".flac" || lowerExt == ".wav" || lowerExt == ".aiff" {
 		trimmed := strings.TrimSuffix(srcPath, filepath.Ext(srcPath))
 		return fmt.Sprintf("%s.opus", trimmed)
 	}
@@ -110,15 +110,15 @@ type FilePlan struct {
 }
 
 type Plan struct {
-	DeleteFiles    []string
-	CopyFiles      []FilePlan
-	TranscodeFiles []FilePlan
+	DeleteFiles  []string
+	CopyFiles    []FilePlan
+	ConvertFiles []FilePlan
 }
 
 func planTranscode(srcTree *Tree, destTree *Tree) *Plan {
 	var deleteFiles []string
 	var copyFiles []FilePlan
-	var transcodeFiles []FilePlan
+	var convertFiles []FilePlan
 
 	// Determine files to delete
 	deadDestFiles := make(map[string]os.FileInfo)
@@ -132,7 +132,7 @@ func planTranscode(srcTree *Tree, destTree *Tree) *Plan {
 		deleteFiles = append(deleteFiles, destFileAbs)
 	}
 
-	// Determine files to copy/transcode
+	// Determine files to copy/convert
 	for srcFile, srcInfo := range srcTree.Files {
 		destFile := mapPath(srcFile)
 		destInfo, destExists := destTree.Files[destFile]
@@ -147,7 +147,7 @@ func planTranscode(srcTree *Tree, destTree *Tree) *Plan {
 				copyFiles = append(copyFiles, FilePlan{srcAbs, destAbs})
 			} else {
 				// Lossless format - transcode to Opus
-				transcodeFiles = append(transcodeFiles, FilePlan{srcAbs, destAbs})
+				convertFiles = append(convertFiles, FilePlan{srcAbs, destAbs})
 			}
 		}
 	}
@@ -156,11 +156,49 @@ func planTranscode(srcTree *Tree, destTree *Tree) *Plan {
 	sort.Slice(copyFiles, func(i, j int) bool {
 		return copyFiles[i].Src < copyFiles[j].Src
 	})
-	sort.Slice(transcodeFiles, func(i, j int) bool {
-		return transcodeFiles[i].Src < transcodeFiles[j].Src
+	sort.Slice(convertFiles, func(i, j int) bool {
+		return convertFiles[i].Src < convertFiles[j].Src
 	})
 
-	return &Plan{DeleteFiles: deleteFiles, CopyFiles: copyFiles, TranscodeFiles: transcodeFiles}
+	return &Plan{DeleteFiles: deleteFiles, CopyFiles: copyFiles, ConvertFiles: convertFiles}
+}
+
+func convertFile(src string, dest string) error {
+	log.Printf("Converting '%s' -> '%s'\n", src, dest)
+
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return fmt.Errorf("failed to mkdir '%s': %w", dest, err)
+	}
+
+	tempDest := fmt.Sprintf("%s.tmp", dest)
+	if err := transcodeAudioFileToOpus(src, tempDest); err != nil {
+		return fmt.Errorf("failed to transcode '%s' -> '%s': %w", src, tempDest, err)
+	}
+
+	// Set cover image
+	image, err := taglib.ReadImage(src)
+	if err != nil {
+		return fmt.Errorf("failed to read image from '%s': %w", src, err)
+	}
+	if err := taglib.WriteImage(tempDest, image); err != nil {
+		return fmt.Errorf("failed to write image to '%s': %w", tempDest, err)
+	}
+
+	// Set tags
+	tags, err := taglib.ReadTags(src)
+	if err != nil {
+		return fmt.Errorf("failed to read tags from '%s': %w", src, err)
+	}
+	if err := taglib.WriteTags(tempDest, tags, 0); err != nil {
+		return fmt.Errorf("failed to write tags to '%s': %w", tempDest, err)
+	}
+
+	// Move temp file into place
+	if err := os.Rename(tempDest, dest); err != nil {
+		return fmt.Errorf("failed to rename '%s' -> '%s': %w", tempDest, dest, err)
+	}
+
+	return nil
 }
 
 func doStuff() error {
@@ -187,8 +225,8 @@ func doStuff() error {
 	}
 
 	plan := planTranscode(srcTree, destTree)
-	log.Printf("Plan: delete %d file(s), copy %d file(s), transcode %d file(s)\n",
-		len(plan.DeleteFiles), len(plan.CopyFiles), len(plan.TranscodeFiles))
+	log.Printf("Plan: delete %d file(s), copy %d file(s), convert %d file(s)\n",
+		len(plan.DeleteFiles), len(plan.CopyFiles), len(plan.ConvertFiles))
 
 	if len(plan.DeleteFiles) > 0 {
 		log.Printf("Deleting %d file(s)\n", len(plan.DeleteFiles))
@@ -212,22 +250,9 @@ func doStuff() error {
 	}
 
 	// TODO concurrency
-	for _, f := range plan.TranscodeFiles {
-		log.Printf("Transcoding '%s' -> '%s'\n", f.Src, f.Dest)
-
-		if err := os.MkdirAll(filepath.Dir(f.Dest), 0755); err != nil {
-			return fmt.Errorf("failed to mkdir '%s': %w", f.Dest, err)
-		}
-
-		tempDest := fmt.Sprintf("%s.tmp", f.Dest)
-		if err := transcodeAudioFileToOpus(f.Src, tempDest); err != nil {
-			return fmt.Errorf("failed to transcode '%s' -> '%s': %w", f.Src, tempDest, err)
-		}
-
-		// TODO write tags
-
-		if err := os.Rename(tempDest, f.Dest); err != nil {
-			return fmt.Errorf("failed to rename '%s' -> '%s': %w", tempDest, f.Dest, err)
+	for _, f := range plan.ConvertFiles {
+		if err := convertFile(f.Src, f.Dest); err != nil {
+			return err
 		}
 	}
 
@@ -240,6 +265,4 @@ func main() {
 	if err := doStuff(); err != nil {
 		log.Fatal(err)
 	}
-	// taglib.WriteImage()
-	// taglib.WriteTags()
 }
