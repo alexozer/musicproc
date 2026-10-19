@@ -167,6 +167,26 @@ func planTranscode(srcTree *Tree, destTree *Tree) *Plan {
 	return &Plan{DeleteFiles: deleteFiles, CopyFiles: copyFiles, ConvertFiles: convertFiles}
 }
 
+func transferTags(src string, dest string) error {
+	tags, err := taglib.ReadTags(src)
+	if err != nil {
+		return fmt.Errorf("failed to read tags from '%s': %w", src, err)
+	}
+
+	// Some track numbers look like: "3/18" instead of "3"
+	trackNumbers := tags["TRACKNUMBER"]
+	for i, tn := range trackNumbers {
+		left, _, _ := strings.Cut(tn, "/")
+		trackNumbers[i] = left
+	}
+
+	if err := taglib.WriteTags(dest, tags, 0); err != nil {
+		return fmt.Errorf("failed to write tags to '%s': %w", dest, err)
+	}
+
+	return nil
+}
+
 func convertFile(src string, dest string) error {
 	log.Printf("Converting '%s' -> '%s'\n", src, dest)
 
@@ -189,12 +209,8 @@ func convertFile(src string, dest string) error {
 	}
 
 	// Set tags
-	tags, err := taglib.ReadTags(src)
-	if err != nil {
-		return fmt.Errorf("failed to read tags from '%s': %w", src, err)
-	}
-	if err := taglib.WriteTags(tempDest, tags, 0); err != nil {
-		return fmt.Errorf("failed to write tags to '%s': %w", tempDest, err)
+	if err := transferTags(src, tempDest); err != nil {
+		return err
 	}
 
 	// Move temp file into place
@@ -260,8 +276,6 @@ func doStuff() error {
 	if err := errGroup.Wait(); err != nil {
 		return err
 	}
-
-	// TODO FS watching
 
 	return nil
 }
