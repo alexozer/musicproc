@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fsnotify/fsnotify"
 	"go.senan.xyz/taglib"
 	"golang.org/x/sync/errgroup"
 )
@@ -235,7 +234,13 @@ func convertFile(src string, dest string) error {
 	return nil
 }
 
-func iterate(srcDir string, destDir string) error {
+func doStuff() error {
+	if len(os.Args) < 3 {
+		log.Fatal("Usage: <src dir> <dest dir>")
+	}
+	srcDir := os.Args[1]
+	destDir := os.Args[2]
+
 	srcTree, err := getFSTree(srcDir)
 	if err != nil {
 		return fmt.Errorf("failed to get src tree: %w", err)
@@ -285,60 +290,8 @@ func iterate(srcDir string, destDir string) error {
 	return nil
 }
 
-func watchDirRecursive(dir string) (*fsnotify.Watcher, error) {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create watcher: %w", err)
-	}
-
-	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if err := watcher.Add(path); err != nil {
-				return fmt.Errorf("failed to watch path '%s': %w", path, err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error walking path '%s': %w", dir, err)
-	}
-
-	return watcher, nil
-}
-
-var FSNOTIFY_EVENTS = []fsnotify.Op{fsnotify.Write, fsnotify.Create, fsnotify.Rename, fsnotify.Remove}
-
 func main() {
-	if len(os.Args) < 3 {
-		log.Fatal("Usage: <src dir> <dest dir>")
-	}
-	srcDir := os.Args[1]
-	destDir := os.Args[2]
-
-	for {
-		watcher, err := watchDirRecursive(srcDir)
-		if err != nil {
-			log.Fatalf("Failed to recursively watch source dir '%s'\n", srcDir)
-		}
-
-		event := <-watcher.Events
-
-		isValidEvent := false
-		for _, op := range FSNOTIFY_EVENTS {
-			if event.Has(op) {
-				isValidEvent = true
-			}
-		}
-
-		if isValidEvent {
-			if err := iterate(srcDir, destDir); err != nil {
-				log.Printf("%v\n", err)
-			}
-		}
-
-		watcher.Close()
+	if err := doStuff(); err != nil {
+		log.Fatal(err)
 	}
 }

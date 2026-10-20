@@ -1,5 +1,3 @@
-github.com/fsnotify/fsnotify v1.10.1 h1:b0/UzAf9yR5rhf3RPm9gf3ehBPpf0oZKIjtpKrx59Ho=
-github.com/fsnotify/fsnotify v1.10.1/go.mod h1:TLheqan6HD6GBK6PrDWyDPBaEV8LspOxvPSjC+bVfgo=
 github.com/tetratelabs/wazero v1.11.1-0.20260428013916-2bbd517b7633 h1:6GN/lazdqr69FIzz1U6c4TF/ppE2dInMR4GzU9QKxjg=
 github.com/tetratelabs/wazero v1.11.1-0.20260428013916-2bbd517b7633/go.mod h1:3ghOSSWYnzX0zd/3Ns4ni2tKxcXDE9/QgkwuH1PW3Rs=
 go.senan.xyz/taglib v0.15.0 h1:8z25qOiNm4o58kV37INltLGRKHelz1QqGBIZ/HWMyjM=
