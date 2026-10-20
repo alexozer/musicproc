@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -87,22 +88,34 @@ func mapPath(srcPath string) string {
 	return srcPath
 }
 
-func copyFile(src string, dst string) error {
+func copyFile(src string, dest string) error {
+	tempDest := fmt.Sprintf("%s.tmp", dest)
+	if err := os.MkdirAll(filepath.Dir(tempDest), 0755); err != nil {
+		return fmt.Errorf("failed to mkdir '%s': %w", filepath.Dir(tempDest), err)
+	}
+
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
 	defer sourceFile.Close()
+	sourceReader := bufio.NewReaderSize(sourceFile, 256*1024)
 
-	destFile, err := os.Create(dst)
+	destFile, err := os.Create(tempDest)
 	if err != nil {
 		return fmt.Errorf("failed to create destination file: %w", err)
 	}
 	defer destFile.Close()
+	destWriter := bufio.NewWriter(destFile)
 
-	_, err = io.Copy(destFile, sourceFile)
+	_, err = io.Copy(destWriter, sourceReader)
 	if err != nil {
 		return fmt.Errorf("failed to copy data: %w", err)
+	}
+
+	// Move temp file into place
+	if err := os.Rename(tempDest, dest); err != nil {
+		return fmt.Errorf("failed to rename '%s' -> '%s': %w", tempDest, dest, err)
 	}
 
 	return nil
@@ -257,9 +270,6 @@ func doStuff() error {
 	if len(plan.CopyFiles) > 0 {
 		log.Printf("Copying %d file(s)\n", len(plan.CopyFiles))
 		for _, f := range plan.CopyFiles {
-			if err := os.MkdirAll(filepath.Dir(f.Dest), 0755); err != nil {
-				return fmt.Errorf("failed to mkdir '%s': %w", f.Dest, err)
-			}
 			if err := copyFile(f.Src, f.Dest); err != nil {
 				return fmt.Errorf("failed to copy file '%s' -> '%s': %w", f.Src, f.Dest, err)
 			}
