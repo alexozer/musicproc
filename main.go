@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"go.senan.xyz/taglib"
 	"golang.org/x/sync/errgroup"
@@ -234,27 +235,7 @@ func convertFile(src string, dest string) error {
 	return nil
 }
 
-func doStuff() error {
-	if len(os.Args) < 3 {
-		log.Fatal("Usage: <src dir> <dest dir>")
-	}
-	srcDir := os.Args[1]
-	destDir := os.Args[2]
-
-	srcTree, err := getFSTree(srcDir)
-	if err != nil {
-		return fmt.Errorf("failed to get src tree: %w", err)
-	}
-
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return fmt.Errorf("failed to create dest dir: %w", err)
-	}
-	destTree, err := getFSTree(destDir)
-	if err != nil {
-		return fmt.Errorf("failed to get dest tree: %w", err)
-	}
-
-	plan := planTranscode(srcTree, destTree)
+func executePlan(plan *Plan) error {
 	log.Printf("Plan: delete %d file(s), copy %d file(s), convert %d file(s)\n",
 		len(plan.DeleteFiles), len(plan.CopyFiles), len(plan.ConvertFiles))
 
@@ -287,11 +268,43 @@ func doStuff() error {
 		return err
 	}
 
+	log.Printf("Finished executing plan\n")
+	return nil
+}
+
+func iterate() error {
+	if len(os.Args) < 3 {
+		log.Fatal("Usage: <src dir> <dest dir>")
+	}
+	srcDir := os.Args[1]
+	destDir := os.Args[2]
+
+	srcTree, err := getFSTree(srcDir)
+	if err != nil {
+		return fmt.Errorf("failed to get src tree: %w", err)
+	}
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create dest dir: %w", err)
+	}
+	destTree, err := getFSTree(destDir)
+	if err != nil {
+		return fmt.Errorf("failed to get dest tree: %w", err)
+	}
+
+	plan := planTranscode(srcTree, destTree)
+	if len(plan.DeleteFiles) > 0 || len(plan.CopyFiles) > 0 || len(plan.ConvertFiles) > 0 {
+		executePlan(plan)
+	}
+
 	return nil
 }
 
 func main() {
-	if err := doStuff(); err != nil {
-		log.Fatal(err)
+	for {
+		if err := iterate(); err != nil {
+			log.Printf("%v\n", err)
+		}
+		time.Sleep(time.Second * 5)
 	}
 }
