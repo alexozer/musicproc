@@ -57,7 +57,7 @@ func getFSTree(dirPath string) (*Tree, error) {
 
 func transcodeAudioFileToOpus(srcPath string, destPath string) error {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-		return fmt.Errorf("Failed to make output dir: %w", err)
+		return fmt.Errorf("failed to make output dir: %w", err)
 	}
 
 	args := []string{
@@ -70,7 +70,7 @@ func transcodeAudioFileToOpus(srcPath string, destPath string) error {
 	}
 	cmd := exec.Command("ffmpeg", args...)
 	if err := runCmd(cmd); err != nil {
-		return fmt.Errorf("Failed to run ffmpeg: %w", err)
+		return fmt.Errorf("failed to run ffmpeg: %w", err)
 	}
 	return nil
 }
