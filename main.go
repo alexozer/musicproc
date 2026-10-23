@@ -93,7 +93,7 @@ func mapPath(srcPath string) string {
 	return norm.NFC.String(srcPath)
 }
 
-func copyFile(src string, dest string) error {
+func copyFile(src string, dest string, mtime time.Time) error {
 	tempDest := fmt.Sprintf("%s.tmp", dest)
 	if err := os.MkdirAll(filepath.Dir(tempDest), 0755); err != nil {
 		return fmt.Errorf("failed to mkdir '%s': %w", filepath.Dir(tempDest), err)
@@ -119,6 +119,9 @@ func copyFile(src string, dest string) error {
 	}
 
 	// Move temp file into place
+	if err := os.Chtimes(tempDest, time.Time{}, mtime); err != nil {
+		return fmt.Errorf("failed to change mtime of '%s' to mtime of src: %w", tempDest, err)
+	}
 	if err := os.Rename(tempDest, dest); err != nil {
 		return fmt.Errorf("failed to rename '%s' -> '%s': %w", tempDest, dest, err)
 	}
@@ -129,6 +132,8 @@ func copyFile(src string, dest string) error {
 type FilePlan struct {
 	Src  string
 	Dest string
+	// Copy src mtime to dest to robustly detect changes to src file in the face of race conditions
+	ModTime time.Time
 }
 
 type Plan struct {
@@ -158,18 +163,25 @@ func planTranscode(srcTree *Tree, destTree *Tree) *Plan {
 	for srcFile, srcInfo := range srcTree.Files {
 		destFile := mapPath(srcFile)
 		destInfo, destExists := destTree.Files[destFile]
-		srcNewer := !destExists || srcInfo.ModTime().Compare(destInfo.ModTime()) == 1
+		// We copy src modtime to dest modtime during conversion, so checking for modtime equality
+		// makes it more robust in the face of race conditions
+		needsUpdate := !destExists || !srcInfo.ModTime().Equal(destInfo.ModTime())
 
-		if srcNewer {
+		if needsUpdate {
 			srcAbs := filepath.Join(srcTree.Base, srcFile)
 			destAbs := filepath.Join(destTree.Base, destFile)
+			plan := FilePlan{
+				Src:     srcAbs,
+				Dest:    destAbs,
+				ModTime: srcInfo.ModTime(),
+			}
 
 			if shouldConvertFileType(srcFile) {
 				// Lossless format - transcode to Opus
-				convertFiles = append(convertFiles, FilePlan{srcAbs, destAbs})
+				convertFiles = append(convertFiles, plan)
 			} else {
 				// Lossy format, unsupported lossless, or non-audio file: just copy
-				copyFiles = append(copyFiles, FilePlan{srcAbs, destAbs})
+				copyFiles = append(copyFiles, plan)
 			}
 		}
 	}
@@ -205,7 +217,7 @@ func transferTags(src string, dest string) error {
 	return nil
 }
 
-func convertFile(src string, dest string) error {
+func convertFile(src string, dest string, mtime time.Time) error {
 	log.Printf("Converting '%s' -> '%s'\n", src, dest)
 
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
@@ -232,6 +244,9 @@ func convertFile(src string, dest string) error {
 	}
 
 	// Move temp file into place
+	if err := os.Chtimes(tempDest, time.Time{}, mtime); err != nil {
+		return fmt.Errorf("failed to change mtime of '%s' to mtime of src: %w", tempDest, err)
+	}
 	if err := os.Rename(tempDest, dest); err != nil {
 		return fmt.Errorf("failed to rename '%s' -> '%s': %w", tempDest, dest, err)
 	}
@@ -255,7 +270,7 @@ func executePlan(plan *Plan) error {
 	if len(plan.CopyFiles) > 0 {
 		log.Printf("Copying %d file(s)\n", len(plan.CopyFiles))
 		for _, f := range plan.CopyFiles {
-			if err := copyFile(f.Src, f.Dest); err != nil {
+			if err := copyFile(f.Src, f.Dest, f.ModTime); err != nil {
 				return fmt.Errorf("failed to copy file '%s' -> '%s': %w", f.Src, f.Dest, err)
 			}
 		}
@@ -265,7 +280,7 @@ func executePlan(plan *Plan) error {
 	errGroup.SetLimit(runtime.NumCPU())
 	for _, f := range plan.ConvertFiles {
 		errGroup.Go(func() error {
-			return convertFile(f.Src, f.Dest)
+			return convertFile(f.Src, f.Dest, f.ModTime)
 		})
 	}
 	if err := errGroup.Wait(); err != nil {
