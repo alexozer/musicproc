@@ -18,6 +18,7 @@ import (
 
 	"go.senan.xyz/taglib"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -83,10 +84,9 @@ type Tree struct {
 func mapPath(srcPath string) string {
 	lowerExt := strings.ToLower(filepath.Ext(srcPath))
 	if lowerExt == ".flac" || lowerExt == ".wav" || lowerExt == ".aiff" {
-		trimmed := strings.TrimSuffix(srcPath, filepath.Ext(srcPath))
-		return fmt.Sprintf("%s.opus", trimmed)
+		srcPath = strings.TrimSuffix(srcPath, filepath.Ext(srcPath)) + ".opus"
 	}
-	return srcPath
+	return norm.NFC.String(srcPath)
 }
 
 func copyFile(src string, dest string) error {
