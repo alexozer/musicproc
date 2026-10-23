@@ -81,9 +81,13 @@ type Tree struct {
 	Files map[string]os.FileInfo
 }
 
+func shouldConvertFileType(path string) bool {
+	lowerExt := strings.ToLower(filepath.Ext(path))
+	return lowerExt == ".flac" || lowerExt == ".wav" || lowerExt == ".aiff"
+}
+
 func mapPath(srcPath string) string {
-	lowerExt := strings.ToLower(filepath.Ext(srcPath))
-	if lowerExt == ".flac" || lowerExt == ".wav" || lowerExt == ".aiff" {
+	if shouldConvertFileType(srcPath) {
 		srcPath = strings.TrimSuffix(srcPath, filepath.Ext(srcPath)) + ".opus"
 	}
 	return norm.NFC.String(srcPath)
@@ -160,12 +164,12 @@ func planTranscode(srcTree *Tree, destTree *Tree) *Plan {
 			srcAbs := filepath.Join(srcTree.Base, srcFile)
 			destAbs := filepath.Join(destTree.Base, destFile)
 
-			if destFile == srcFile {
-				// Lossy format (or unsupported lossless), just copy
-				copyFiles = append(copyFiles, FilePlan{srcAbs, destAbs})
-			} else {
+			if shouldConvertFileType(srcFile) {
 				// Lossless format - transcode to Opus
 				convertFiles = append(convertFiles, FilePlan{srcAbs, destAbs})
+			} else {
+				// Lossy format, unsupported lossless, or non-audio file: just copy
+				copyFiles = append(copyFiles, FilePlan{srcAbs, destAbs})
 			}
 		}
 	}
