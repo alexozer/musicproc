@@ -7,6 +7,8 @@
 - [x] Point navidrome / jellyfin at transcoded music library
 - [x] Test on phone
 - [x] Consider removing navidrome
+- [ ] Race condition: may convert partially transferred files (like if file is transferred by Samba)
+- [ ] Log messages should have appropriate systemd info/warn/error tag if possible
 
 ## Low priority
 
