@@ -1,7 +1,7 @@
 # TODO
 
-- [ ] Poll src directory for changes, for now
-- [ ] Systemd service
+- [x] Systemd service
+- [x] Poll src directory for changes, for now
 - [x] Copy files to .tmp first
 - [X] Fix Adventure track numbers
 - [x] Point navidrome / jellyfin at transcoded music library

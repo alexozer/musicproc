@@ -1,0 +1,21 @@
+[Unit]
+Description=Music transcoding daemon (FLAC/etc -> Opus)
+After=local-fs.target
+
+[Service]
+User=alex
+Group=alex
+ExecStart=/usr/local/bin/musicproc /home/alex/Music /home/alex/Downloads/music-transcoded
+Restart=on-failure
+RestartSec=10
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/alex/Downloads/music-transcoded
+ReadOnlyPaths=/home/alex/Music
+
+[Install]
+WantedBy=multi-user.target
