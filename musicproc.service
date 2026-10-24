@@ -9,13 +9,5 @@ ExecStart=/usr/local/bin/musicproc /home/alex/Music /home/alex/Downloads/music-t
 Restart=on-failure
 RestartSec=10
 
-# Hardening
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/home/alex/Downloads/music-transcoded
-ReadOnlyPaths=/home/alex/Music
-
 [Install]
 WantedBy=multi-user.target
