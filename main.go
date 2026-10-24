@@ -1,11 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
-	"io/fs"
 	"log"
 	"maps"
 	"os"
@@ -24,37 +21,6 @@ import (
 const (
 	OPUS_BITRATE = "160k"
 )
-
-func runCmd(cmd *exec.Cmd) error {
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s <args>: %v:\n%s", cmd.Path, err, out)
-	}
-	return nil
-}
-
-func getFSTree(dirPath string) (*Tree, error) {
-	files := make(map[string]os.FileInfo)
-	err := filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && !strings.HasPrefix(d.Name(), ".") {
-			relPath, err := filepath.Rel(dirPath, path)
-			if err != nil {
-				return err
-			}
-			if files[relPath], err = d.Info(); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error walking path '%s': %w", dirPath, err)
-	}
-	return &Tree{Base: dirPath, Files: files}, nil
-}
 
 func transcodeAudioFileToOpus(srcPath string, destPath string) error {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
@@ -76,11 +42,6 @@ func transcodeAudioFileToOpus(srcPath string, destPath string) error {
 	return nil
 }
 
-type Tree struct {
-	Base  string
-	Files map[string]os.FileInfo
-}
-
 func shouldConvertFileType(path string) bool {
 	lowerExt := strings.ToLower(filepath.Ext(path))
 	return lowerExt == ".flac" || lowerExt == ".wav" || lowerExt == ".aiff"
@@ -91,42 +52,6 @@ func mapPath(srcPath string) string {
 		srcPath = strings.TrimSuffix(srcPath, filepath.Ext(srcPath)) + ".opus"
 	}
 	return norm.NFC.String(srcPath)
-}
-
-func copyFile(src string, dest string, mtime time.Time) error {
-	tempDest := fmt.Sprintf("%s.tmp", dest)
-	if err := os.MkdirAll(filepath.Dir(tempDest), 0755); err != nil {
-		return fmt.Errorf("failed to mkdir '%s': %w", filepath.Dir(tempDest), err)
-	}
-
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("failed to open source file: %w", err)
-	}
-	defer sourceFile.Close()
-	sourceReader := bufio.NewReaderSize(sourceFile, 256*1024)
-
-	destFile, err := os.Create(tempDest)
-	if err != nil {
-		return fmt.Errorf("failed to create destination file: %w", err)
-	}
-	defer destFile.Close()
-	destWriter := bufio.NewWriter(destFile)
-
-	_, err = io.Copy(destWriter, sourceReader)
-	if err != nil {
-		return fmt.Errorf("failed to copy data: %w", err)
-	}
-
-	// Move temp file into place
-	if err := os.Chtimes(tempDest, time.Time{}, mtime); err != nil {
-		return fmt.Errorf("failed to change mtime of '%s' to mtime of src: %w", tempDest, err)
-	}
-	if err := os.Rename(tempDest, dest); err != nil {
-		return fmt.Errorf("failed to rename '%s' -> '%s': %w", tempDest, dest, err)
-	}
-
-	return nil
 }
 
 type FilePlan struct {
@@ -255,7 +180,7 @@ func convertFile(src string, dest string, mtime time.Time) error {
 }
 
 func executePlan(plan *Plan) error {
-	log.Printf("Plan: delete %d file(s), copy %d file(s), convert %d file(s)\n",
+	log.Printf("Plan: delete %d file(s), hardlink/copy %d file(s), convert %d file(s)\n",
 		len(plan.DeleteFiles), len(plan.CopyFiles), len(plan.ConvertFiles))
 
 	if len(plan.DeleteFiles) > 0 {
@@ -268,10 +193,10 @@ func executePlan(plan *Plan) error {
 	}
 
 	if len(plan.CopyFiles) > 0 {
-		log.Printf("Copying %d file(s)\n", len(plan.CopyFiles))
+		log.Printf("Hardlinking/copying %d file(s)\n", len(plan.CopyFiles))
 		for _, f := range plan.CopyFiles {
-			if err := copyFile(f.Src, f.Dest, f.ModTime); err != nil {
-				return fmt.Errorf("failed to copy file '%s' -> '%s': %w", f.Src, f.Dest, err)
+			if err := hardlinkOrCopyFile(f.Src, f.Dest, f.ModTime); err != nil {
+				return fmt.Errorf("failed to hardlink/copy file '%s' -> '%s': %w", f.Src, f.Dest, err)
 			}
 		}
 	}
