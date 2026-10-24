@@ -5,6 +5,8 @@ Other files (lossy audio, album covers, lyrics files, etc.) are copied over unch
 
 I use this to prepare a music library to sync to my phone.
 
+Requires `ffmpeg` on `$PATH`.
+
 ## What `musicproc` handles for you
 
 - Mirrors a given read-only source directory to a destination directory with transcoded files
