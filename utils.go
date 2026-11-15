@@ -31,7 +31,10 @@ func getFSTree(dirPath string) (*Tree, error) {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && !strings.HasPrefix(d.Name(), ".") {
+
+		isHidden := strings.HasPrefix(d.Name(), ".")
+		isPlaylist := strings.ToLower(filepath.Ext(d.Name())) == ".m3u8"
+		if !d.IsDir() && !isHidden && !isPlaylist {
 			relPath, err := filepath.Rel(dirPath, path)
 			if err != nil {
 				return err
